@@ -92,6 +92,8 @@ library
                        hashable,
                        haskell-src ==1.0.*,
                        insert-ordered-containers,
+                       large-generics,
+                       large-records,
                        lens,
                        mtl ==2.2.*,
                        neat-interpolation,
@@ -171,6 +173,7 @@ test-suite tests
     , doctest
     , generic-arbitrary
     , hedgehog
+    , large-records
     , mtl ==2.2.*
     , parsec >= 3.1.9 && <3.2.0
     , pretty ==1.1.*

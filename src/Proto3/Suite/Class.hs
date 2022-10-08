@@ -78,6 +78,7 @@ module Proto3.Suite.Class
 
   -- * Decoding
   , HasDefault(..)
+  , lrGenericDef
   , fromByteString
   , fromB64
 
@@ -103,6 +104,8 @@ import           Data.Int               (Int32, Int64)
 import qualified Data.Map               as M
 import           Data.Maybe             (fromMaybe, isNothing)
 import           Data.Proxy             (Proxy (..))
+import qualified Data.Record.Generic.Rep as LR
+import qualified Data.Record.Plugin.Runtime as LR
 import           Data.String            (IsString (..))
 import qualified Data.Text              as T
 import qualified Data.Text.Lazy         as TL
@@ -250,6 +253,11 @@ instance (Datatype i, GenericHasDefault f) => GenericHasDefault (D1 i f) where
   genericDef = M1 (genericDef @f)
 instance (Selector i, GenericHasDefault f) => GenericHasDefault (S1 i f) where
   genericDef = M1 (genericDef @f)
+
+-- Produce a default value for a large-record if all of its fields
+-- have a HasDefault constraint.
+lrGenericDef :: (LR.Generic a, LR.Constraints a HasDefault) => a
+lrGenericDef = LR.to $ LR.cpure (Proxy @HasDefault) (pure def)
 
 -- | This class captures those types whose names need to appear in .proto files.
 --
