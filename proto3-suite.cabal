@@ -42,7 +42,7 @@ library
 
   if flag(dhall)
     exposed-modules:   Proto3.Suite.DhallPB
-    build-depends:     dhall >=1.13 && < 1.39
+    build-depends:     dhall >=1.28 && < 1.39
     cpp-options:       -DDHALL
 
   if flag(swagger)
@@ -105,6 +105,7 @@ library
                        QuickCheck >=2.10 && <2.15,
                        quickcheck-instances < 0.4,
                        safe ==0.3.*,
+                       sop-core,
                        split,
                        system-filepath,
                        time,
@@ -129,7 +130,7 @@ test-suite tests
 
   if flag(dhall)
     other-modules:     TestDhall
-    build-depends:     dhall >=1.13 && < 1.39
+    build-depends:     dhall >=1.28 && < 1.39
     cpp-options:       -DDHALL
 
   if flag(swagger)

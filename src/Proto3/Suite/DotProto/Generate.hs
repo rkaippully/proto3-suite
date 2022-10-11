@@ -199,7 +199,7 @@ renderHsModuleForDotProto stringType extraInstanceFiles dotProto importCtxt = do
     |]
 
     lrAnnotations =
-      unlines . map (\(HsIdent name) -> "{-# ANN type " <> name <> " largeRecord { debugLargeRecords = Hs.False } #-}")
+      unlines . map (\(HsIdent name) -> "{-# ANN type " <> name <> " largeRecord #-}")
 
 -- | Compile a Haskell module AST given a 'DotProto' package AST.
 -- Instances given in @eis@ override those otherwise generated.
@@ -429,7 +429,7 @@ hsDhallPB = "HsDhallPb"
 dhallPBName :: String -> HsQName
 dhallPBName name = Qual (Module hsDhallPB) (HsIdent name)
 
--- *** Generate Dhall Interpret and Inject generic instances
+-- *** Generate Dhall FromDhall and ToDhall generic instances
 
 fromDhall, toDhall :: String
 (fromDhall, toDhall) =
@@ -439,17 +439,25 @@ fromDhall, toDhall :: String
   ("Interpret", "Inject")
 #endif
 
-dhallInterpretInstDecl :: String -> HsDecl
-dhallInterpretInstDecl typeName =
+fromDhallInstDecl :: Bool -> String -> HsDecl
+fromDhallInstDecl isLargeRecord typeName =
   instDecl_ (dhallPBName fromDhall)
             [ type_ typeName ]
-            [ ]
+            [ HsFunBind [autoWithDecl] | isLargeRecord ]
+  where
+    autoWithDecl = match_ (HsIdent "autoWith") []
+                          (HsUnGuardedRhs (HsVar (dhallPBName "lrGenericAutoWith")))
+                          []
 
-dhallInjectInstDecl :: String -> HsDecl
-dhallInjectInstDecl typeName =
+toDhallInstDecl :: Bool -> String -> HsDecl
+toDhallInstDecl isLargeRecord typeName =
   instDecl_ (dhallPBName toDhall)
             [ type_ typeName ]
-            [ ]
+            [ HsFunBind [injectWithDecl] | isLargeRecord ]
+  where
+    injectWithDecl = match_ (HsIdent "injectWith") []
+                            (HsUnGuardedRhs (HsVar (dhallPBName "lrGenericInjectWith")))
+                            []
 #endif
 
 -- ** Helpers to wrap/unwrap types for protobuf (de-)serialization
@@ -753,8 +761,8 @@ dotProtoMessageD stringType ctxt parentIdent messageIdent messageParts = do
 
 #ifdef DHALL
                     -- Generate Dhall instances
-                    , pure (dhallInterpretInstDecl messageName)
-                    , pure (dhallInjectInstDecl messageName)
+                    , pure (fromDhallInstDecl isLargeRecord messageName)
+                    , pure (toDhallInstDecl isLargeRecord messageName)
 #endif
                     ]
 
@@ -812,16 +820,21 @@ dotProtoMessageD stringType ctxt parentIdent messageIdent messageParts = do
                             =<< mapM (dpIdentUnqualName . dotProtoFieldName) fields
 #endif
 
-      pure [ dataDecl_ fullName cons defaultMessageDeriving
-           , nfDataInstD False fullName
+      let nestedDataDecl = dataDecl_ fullName cons defaultMessageDeriving
+      let isLargeRecord =
+              case nestedDataDecl of
+                HsDataDecl _ _ _ _ [HsRecDecl _ _ (_fld1:_fld2:_)] _ -> True
+                _ -> False
+      pure [ nestedDataDecl
+           , nfDataInstD isLargeRecord fullName
            , namedInstD fullName
 #ifdef SWAGGER
            , toSchemaInstance
 #endif
 
 #ifdef DHALL
-           , dhallInterpretInstDecl fullName
-           , dhallInjectInstDecl fullName
+           , fromDhallInstDecl isLargeRecord fullName
+           , toDhallInstDecl isLargeRecord fullName
 #endif
            ]
 
@@ -1526,8 +1539,8 @@ dotProtoEnumD parentIdent enumIdent enumParts = do
 
 #ifdef DHALL
        -- Generate Dhall instances
-       , dhallInterpretInstDecl enumName
-       , dhallInjectInstDecl enumName
+       , fromDhallInstDecl False enumName
+       , toDhallInstDecl False enumName
 #endif
 
        -- And the Finite instance, used to infer a Swagger ToSchema instance

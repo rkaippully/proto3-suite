@@ -1,36 +1,45 @@
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-
-#if !(MIN_VERSION_dhall(1,27,0))
-#define FromDhall Interpret
-#define ToDhall Inject
-#endif
 
 module Proto3.Suite.DhallPB
   ( -- * Modules
     module Dhall
-  )
-where
-import           Data.Functor.Contravariant  (contramap)
-import           Data.Int                    (Int32, Int64)
-import           Data.Word                   (Word32, Word64)
-import           Dhall                       (FromDhall (..), ToDhall (..))
-import           GHC.Float                   (double2Float, float2Double)
-import           Proto3.Suite.Types          (Enumerated (..), Fixed (..))
+
+    -- * large-record support
+  , lrGenericInjectWith
+  , lrGenericAutoWith
+  ) where
 
 import qualified Data.ByteString
 import qualified Data.ByteString.Base64
 import qualified Data.ByteString.Base64.Lazy
 import qualified Data.ByteString.Lazy
+import Data.Functor.Contravariant (contramap)
+import Data.Int (Int32, Int64)
+import Data.Proxy (Proxy (..))
+import qualified Data.Record.Generic as LG
+import qualified Data.Record.Generic.Rep as LG
+import Data.SOP.BasicFunctors ((:.:) (..), I (..), K (..))
+import qualified Data.Text as Text
 import qualified Data.Text.Encoding
 import qualified Data.Text.Lazy.Encoding
+import Data.Void (Void)
+import Data.Word (Word32, Word64)
+import Dhall (FromDhall (..), ToDhall (..))
 import qualified Dhall
-
-#if !(MIN_VERSION_dhall(1,27,0))
-import qualified Data.Map
-#endif
+import qualified Dhall.Core as Dhall
+import qualified Dhall.Map as Dhall
+import qualified Dhall.Src as Dhall
+import GHC.Float (double2Float, float2Double)
+import Proto3.Suite.Types (Enumerated (..), Fixed (..))
 
 --------------------------------------------------------------------------------
 -- Interpret the special 'Enumerated' type
@@ -110,18 +119,6 @@ instance Dhall.FromDhall (Fixed Word64) where
 instance Dhall.FromDhall Float where
   autoWith _ = fmap double2Float Dhall.double
 
-#if !(MIN_VERSION_dhall(1,27,0))
---------------------------------------------------------------------------------
--- Interpret maps
---
--- Dhall has no map type.  We resort to an association list,
--- though that is not safe because keys may be repeated.
-
-instance (Dhall.Interpret k, Dhall.Interpret v, Ord k) =>
-         Dhall.Interpret (Data.Map.Map k v) where
-  autoWith = fmap (fmap Data.Map.fromList) Dhall.autoWith
-#endif
-
 --------------------------------------------------------------------------------
 -- Inject the special 'Enumerated' type
 
@@ -179,14 +176,101 @@ instance Dhall.ToDhall Data.ByteString.ByteString where
       -- because we Base64 encode the ByteString first
       b64Encode = Data.Text.Encoding.decodeUtf8 . Data.ByteString.Base64.encode
 
-#if !(MIN_VERSION_dhall(1,27,0))
---------------------------------------------------------------------------------
--- Inject maps
---
--- Dhall has no map type.  We resort to an association list,
--- though that is not safe because keys may be repeated.
+{- Generic deriving of classes for large-records
 
-instance (Dhall.Inject k, Dhall.Inject v) =>
-         Dhall.Inject (Data.Map.Map k v) where
-  injectWith = fmap (contramap Data.Map.toAscList) Dhall.injectWith
+ The internal representation of the types defined using the large-record package
+ is not compatible with GHC Generics. The functions below provide large-record
+ compatible implementations of methods for some type classes.
+-}
+
+{-| A generic 'autoWith' implementation for large-record types. -}
+lrGenericAutoWith :: forall a. (LG.Generic a, LG.Constraints a Dhall.FromDhall) => Dhall.InputNormalizer -> Dhall.Decoder a
+lrGenericAutoWith normalizer = Dhall.Decoder extract expected
+  where
+    makeCompRep ::
+      (forall x. Dhall.FromDhall x => K String x -> f (g x)) ->
+      LG.Rep (f :.: g) a
+    makeCompRep f = LG.cmap
+                      (Proxy @Dhall.FromDhall)
+                      (Comp . f)
+                      (LG.recordFieldNames $ LG.metadata (Proxy @a))
+
+    extract :: Dhall.Expr Dhall.Src Void -> Dhall.Extractor Dhall.Src Void a
+    extract expr =
+      case expr of
+        Dhall.RecordLit flds -> do
+          let getField :: forall x. Dhall.FromDhall x => K String x -> Dhall.Extractor Dhall.Src Void x
+              getField (K fld) =
+                let decoder = Dhall.autoWith @x normalizer
+                in maybe
+                     (Dhall.typeError expected expr)
+                     (Dhall.extract decoder)
+#if MIN_VERSION_dhall(1,34,0)
+                     (Dhall.recordFieldValue <$> Dhall.lookup (Text.pack fld) flds)
+#else
+                     (Dhall.lookup (Text.pack fld) flds)
 #endif
+          LG.to <$> LG.sequenceA (makeCompRep (fmap I . getField))
+        _ -> Dhall.typeError expected expr
+
+#if MIN_VERSION_dhall(1,34,0)
+    expected :: Dhall.Expector (Dhall.Expr Dhall.Src Void)
+    expected = do
+      let getField :: forall x. Dhall.FromDhall x => K String x -> Dhall.Expector (Dhall.Text, Dhall.RecordField Dhall.Src Void)
+          getField (K fld) = do
+            let decoder = Dhall.autoWith @x normalizer
+            f <- Dhall.makeRecordField <$> Dhall.expected decoder
+            pure (Text.pack fld, f)
+#elif MIN_VERSION_dhall(1,33,0)
+    expected :: Dhall.Expector (Dhall.Expr Dhall.Src Void)
+    expected = do
+      let getField :: forall x. Dhall.FromDhall x => K String x -> Dhall.Expector (Dhall.Text, Dhall.Expr Dhall.Src Void)
+          getField (K fld) = do
+            let decoder = Dhall.autoWith @x normalizer
+            f <- Dhall.expected decoder
+            pure (Text.pack fld, f)
+#else
+    expected :: Dhall.Expr Dhall.Src Void
+    expected = LG.unI $ do
+      let getField :: forall x. Dhall.FromDhall x => K String x -> I (Dhall.Text, Dhall.Expr Dhall.Src Void)
+          getField (K fld) = do
+            let decoder = Dhall.autoWith @x normalizer
+            let f = Dhall.expected decoder
+            pure (Text.pack fld, f)
+#endif
+      Dhall.Record . Dhall.fromList . LG.collapse <$> LG.sequenceA (makeCompRep (fmap K . getField))
+
+{-| A generic 'injectWith' implementation for large-record types. -}
+lrGenericInjectWith :: forall a. (LG.Generic a, LG.Constraints a Dhall.ToDhall) => Dhall.InputNormalizer -> Dhall.Encoder a
+lrGenericInjectWith normalizer = Dhall.Encoder embed declared
+  where
+    md = LG.metadata (Proxy @a)
+    fieldNames = LG.recordFieldNames md
+
+    embed :: a -> Dhall.Expr Dhall.Src Void
+    embed = Dhall.RecordLit
+              . Dhall.fromList
+              . LG.collapse
+#if MIN_VERSION_dhall(1,34,0)
+              . LG.zipWith (LG.mapKKK $ \n x -> (Text.pack n, Dhall.makeRecordField x)) fieldNames
+#else
+              . LG.zipWith (LG.mapKKK $ \n x -> (Text.pack n, x)) fieldNames
+#endif
+              . LG.cmap (Proxy @Dhall.ToDhall) (K . Dhall.embed (injectWith normalizer) . LG.unI)
+              . LG.from
+
+    declared :: Dhall.Expr Dhall.Src Void
+    declared = Dhall.Record
+                 $ Dhall.fromList
+                 $ LG.collapse
+                 $ LG.cmap
+                     (Proxy @Dhall.ToDhall)
+                     (\(K n :: K String x) ->
+                          let typ = Dhall.declared (injectWith @x normalizer)
+#if MIN_VERSION_dhall(1,34,0)
+                          in K (Text.pack n, Dhall.makeRecordField typ)
+#else
+                          in K (Text.pack n, typ)
+#endif
+                     )
+                     fieldNames
