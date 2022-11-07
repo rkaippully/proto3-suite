@@ -415,6 +415,19 @@ toUpperFirst :: String -> String
 toUpperFirst "" = ""
 toUpperFirst (x : xs) = toUpper x : xs
 
+-- | Lowercases the first character of a string.
+--
+-- ==== __Examples__
+--
+-- >>> toLowerFirst "Abc"
+-- "abc"
+--
+-- >>> toLowerFirst ""
+-- ""
+toLowerFirst :: String -> String
+toLowerFirst "" = ""
+toLowerFirst (x : xs) = toLower x : xs
+
 -- | @'segmentBy' p xs@  partitions @xs@ into segments of @'Either' [a] [a]@
 -- with:
 --

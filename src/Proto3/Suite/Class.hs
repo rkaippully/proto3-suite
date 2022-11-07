@@ -78,7 +78,6 @@ module Proto3.Suite.Class
 
   -- * Decoding
   , HasDefault(..)
-  , lrGenericDef
   , fromByteString
   , fromB64
 
@@ -104,8 +103,6 @@ import           Data.Int               (Int32, Int64)
 import qualified Data.Map               as M
 import           Data.Maybe             (fromMaybe, isNothing)
 import           Data.Proxy             (Proxy (..))
-import qualified Data.Record.Generic.Rep as LG
-import qualified Data.Record.Plugin.Runtime as LR
 import           Data.String            (IsString (..))
 import qualified Data.Text              as T
 import qualified Data.Text.Lazy         as TL
@@ -862,7 +859,3 @@ instance GenericMessage f => GenericMessage (M1 D t f) where
   genericEncodeMessage num (M1 x)   = genericEncodeMessage num x
   genericDecodeMessage num          = M1 <$> genericDecodeMessage num
   genericDotProto _                 = genericDotProto (proxy# :: Proxy# f)
-
--- | A generic 'def' implementation for large-record types.
-lrGenericDef :: (LR.Generic a, LR.Constraints a HasDefault) => a
-lrGenericDef = LR.to $ LG.cpure (Proxy @HasDefault) (pure def)
